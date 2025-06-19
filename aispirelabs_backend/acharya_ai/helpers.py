@@ -144,3 +144,60 @@ Be thorough and detailed in your analysis.
             "areasForImprovement": ["Fix AI call"],
             "finalAssessment": f"Could not generate feedback due to an error: {e}",
         }
+
+def generate_ai_feedback_for_text_attempt(feedback_instance):
+    """
+    Generates AI-driven feedback for a completed interview attempt based on
+    logged questions and text answers.
+    For this subtask, it returns MOCKED data.
+    """
+    # In a real scenario, you would use feedback_instance.questions_log,
+    # feedback_instance.answers_log, and details from feedback_instance.interview
+    # to construct a detailed prompt for an LLM.
+
+    print(f"AI: Generating MOCKED feedback for Feedback ID: {feedback_instance.id}")
+    print(f"Interview Role: {feedback_instance.interview.role}, Level: {feedback_instance.interview.level}")
+    # print(f"Questions Log: {feedback_instance.questions_log}")
+    # print(f"Answers Log: {feedback_instance.answers_log}")
+
+    # Fixed categories for now
+    fixed_categories = [
+        "Clarity & Communication",
+        "Technical Proficiency/Relevance",
+        "Problem Solving Approach",
+        "Behavioral Fit/STAR Method"
+    ]
+
+    category_scores_mock = []
+    for i, category_name in enumerate(fixed_categories):
+        score = random.randint(6, 9) * 10 # Score between 60 and 90
+        category_scores_mock.append({
+            "name": category_name,
+            "score": score / 10, # Assuming score is 0-10 for categories in this mock
+            "comment": f"Mock comment for {category_name}: Candidate demonstrated good aspects but could improve slightly in area {i+1}."
+        })
+
+    total_score_mock = sum(cs['score'] for cs in category_scores_mock) * 10 / len(category_scores_mock) if category_scores_mock else 75
+
+
+    return {
+        "total_score": int(total_score_mock), # Example: 0-100 scale
+        "category_scores": category_scores_mock,
+        "strengths": [
+            "Mock Strength: Good articulation of ideas.",
+            f"Mock Strength: Showed initiative in discussing mock project related to {feedback_instance.interview.role}.",
+            "Mock Strength: Positive attitude during the mock interview."
+        ],
+        "areas_for_improvement": [
+            "Mock Improvement: Could provide more specific examples (S.T.A.R method).",
+            "Mock Improvement: Elaborate more on technical challenges faced in mock scenarios.",
+            f"Mock Improvement: Research more about typical {feedback_instance.interview.level} expectations for a {feedback_instance.interview.role}."
+        ],
+        "final_assessment": (
+            f"This is a mock final assessment. The candidate for the {feedback_instance.interview.role} role "
+            "showed promise. Key strengths include clear communication and a positive attitude. "
+            "To improve, the candidate should focus on providing more detailed examples using the S.T.A.R. method "
+            "and deepen their understanding of advanced topics relevant to the role. Overall, a good mock performance "
+            "with identifiable areas for growth."
+        )
+    }

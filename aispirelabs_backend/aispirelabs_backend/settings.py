@@ -171,6 +171,9 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY not found in environment variables. AI features will not work.")
 
+# Interview Settings
+MAX_INTERVIEW_WARNINGS = 3 # Max warnings before interview is terminated
+
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',      # Next.js local development
