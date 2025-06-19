@@ -12,6 +12,7 @@ class User(AbstractUser):
     # Let's add email_verified explicitly for clarity
     email_verified = models.BooleanField(default=False)
     auth_provider = models.CharField(max_length=20, default='email') # 'email' or 'google'
+    user_type = models.CharField(max_length=10, choices=[('candidate', 'Candidate'), ('hr', 'HR')], default='candidate')
     # createdAt is 'date_joined' in AbstractUser
     # updatedAt can be added if needed, or rely on log entries for changes
     # AbstractUser already has: username, first_name, last_name, email, password,

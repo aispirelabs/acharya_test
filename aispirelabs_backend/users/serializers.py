@@ -23,9 +23,10 @@ class UserSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserModel
-        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'photoURL']
+        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'photoURL', 'user_type']
         extra_kwargs = {
             'password': {'write_only': True, 'style': {'input_type': 'password'}, 'min_length': 8},
+            'user_type': {'required': False}, # It has a default in the model
             'email': {'required': True},
             'username': {'required': True},
             'photoURL': {'required': False, 'allow_blank': True, 'default': ''},
@@ -41,7 +42,42 @@ class RegisterSerializer(serializers.ModelSerializer):
             first_name=validated_data.get('first_name'),
             last_name=validated_data.get('last_name'),
             photoURL=validated_data.get('photoURL'),
+            user_type=validated_data.get('user_type', UserModel._meta.get_field('user_type').get_default()),
             auth_provider='email',
             email_verified=False
         )
         return user
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserModel
+        fields = [
+            'id',
+            'username',
+            'email',
+            'first_name',
+            'last_name',
+            'photoURL',
+            'email_verified',
+            'auth_provider',
+            'date_joined',
+            'last_login',
+            'user_type'
+        ]
+        read_only_fields = [
+            'id',
+            'email_verified',
+            'auth_provider',
+            'date_joined',
+            'last_login'
+        ]
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    new_password = serializers.CharField(
+        write_only=True,
+        required=True,
+        style={'input_type': 'password'},
+        min_length=8 # Optional: Enforce min_length here too
+    )
+    # We don't need uidb64 and token here as they are not part of what the user *types in*
+    # for the new password itself, but they will be validated in the view.
