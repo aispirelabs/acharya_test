@@ -3,6 +3,11 @@ from django.contrib.auth.models import AbstractUser
 import uuid
 
 class User(AbstractUser):
+    USER_TYPE_CHOICES = (
+        ('candidate', 'Candidate'),
+        ('hr', 'HR Professional'),
+    )
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # 'username', 'email', 'password', 'first_name', 'last_name' are already in AbstractUser
     # 'name' can be derived from first_name and last_name or use first_name as display name
@@ -12,6 +17,12 @@ class User(AbstractUser):
     # Let's add email_verified explicitly for clarity
     email_verified = models.BooleanField(default=False)
     auth_provider = models.CharField(max_length=20, default='email') # 'email' or 'google'
+    
+    # User type and HR-specific fields
+    user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='candidate')
+    company = models.CharField(max_length=255, blank=True, null=True)
+    position = models.CharField(max_length=255, blank=True, null=True)
+    
     # createdAt is 'date_joined' in AbstractUser
     # updatedAt can be added if needed, or rely on log entries for changes
     # AbstractUser already has: username, first_name, last_name, email, password,

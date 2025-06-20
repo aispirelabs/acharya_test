@@ -1,47 +1,70 @@
-from rest_framework import serializers
-from .models import User # Assuming User model is in .models
-from django.contrib.auth.hashers import make_password
-from django.contrib.auth import get_user_model
 
-UserModel = get_user_model()
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+
+User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UserModel
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'photoURL', 'email_verified', 'auth_provider', 'date_joined', 'last_login', 'password']
-        read_only_fields = ['id', 'email_verified', 'auth_provider', 'date_joined', 'last_login']
-        extra_kwargs = {
-            'password': {'write_only': True, 'required': False, 'allow_null': True},
-        }
+        model = User
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'photoURL', 
+                 'email_verified', 'auth_provider', 'user_type', 'company', 'position', 'date_joined')
+        read_only_fields = ('id', 'date_joined')
 
-    def update(self, instance, validated_data):
-        password = validated_data.pop('password', None)
-        if password:
-            instance.set_password(password)
-        return super().update(instance, validated_data)
+class UserRegistrationSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, validators=[validate_password])
+    password_confirm = serializers.CharField(write_only=True)
+    user_type = serializers.ChoiceField(choices=User.USER_TYPE_CHOICES, default='candidate')
+    company = serializers.CharField(required=False, allow_blank=True)
+    position = serializers.CharField(required=False, allow_blank=True)
 
-class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UserModel
-        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'photoURL']
-        extra_kwargs = {
-            'password': {'write_only': True, 'style': {'input_type': 'password'}, 'min_length': 8},
-            'email': {'required': True},
-            'username': {'required': True},
-            'photoURL': {'required': False, 'allow_blank': True, 'default': ''},
-            'first_name': {'required': False, 'allow_blank': True, 'default': ''},
-            'last_name': {'required': False, 'allow_blank': True, 'default': ''},
-        }
+        model = User
+        fields = ('username', 'email', 'password', 'password_confirm', 'first_name', 
+                 'last_name', 'user_type', 'company', 'position')
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password_confirm']:
+            raise serializers.ValidationError("Passwords don't match")
+
+        # Validate HR fields
+        if attrs.get('user_type') == 'hr':
+            if not attrs.get('company'):
+                raise serializers.ValidationError("Company is required for HR users")
+            if not attrs.get('position'):
+                raise serializers.ValidationError("Position is required for HR users")
+
+        return attrs
 
     def create(self, validated_data):
-        user = UserModel.objects.create_user(
-            username=validated_data['username'],
-            email=validated_data['email'],
-            password=validated_data['password'],
-            first_name=validated_data.get('first_name'),
-            last_name=validated_data.get('last_name'),
-            photoURL=validated_data.get('photoURL'),
-            auth_provider='email',
-            email_verified=False
-        )
+        validated_data.pop('password_confirm')
+        user = User.objects.create_user(**validated_data)
         return user
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, validators=[validate_password])
+    confirm_password = serializers.CharField(required=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError("New passwords don't match")
+        return attrs
+
+
+class PasswordResetSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField(required=True)
+    token = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, validators=[validate_password])
+    confirm_password = serializers.CharField(required=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError("Passwords don't match")
+        return attrs
