@@ -1,0 +1,21 @@
+the present code contains a live interaction with gemini api, voice and video...
+
+I want to change this application into as a AI interviewer.. It should be useful for both users and HRs, I am thinking my appication name as Acharya AI first i need a landing page for my application... after landing page i need signup pages and signin pages for both HRs and Normal users. design and user experience is upto you..
+
+Once they login, In normal user login: Show him a welcome hero section with all his recent interviews list , and an option to create interview and another one to view all interviews.. if the user clicks on create interview open a popup and ask the interview details like , position name, interview level, interview type, number of questions, job description, resume(upload). when the user clicks on view all interviews navigate to a page and showhim all the interviews created by him
+
+on any interview he created , when he clicks on it navigate the user to interview page, there it should be a video chat with the user and an option to screen share for solving any coding questions also. and the interviewer should interact with the user just feeling like a interviewer and interiviewer should find the candidate is copying or not, if the user finds copying needs to give a warning 3 times, if he still copying then close the interview .. at the end interviewer needs to generate the feedback on the user defining his skills in different categories.. total_score, category_scores, strengths, areas_for_improvement, final_assessment. A user can give n number of attempts if he creates the interview... if HR creates the interview then he can give the interview based on the limit set by particular HR. THe user can see the feedbacks of all his attemtps for a interview created by him.. HR created interview feedback depends on HR to show it to the user or not.. these are product features of User dashboard
+
+now lets see HR dashboard
+
+show him welcome dashboard with some analytics , an option to create a interview, when he click on create interview open a popup or open a page to take some details realted to job like , position, level, type, questions, jd, resume upload(optional), emails (if resume uploaded then only one email you need to take else mulitpleemails inputs are allowed),give him an option to show feedback to the user or not.
+
+once he creates the interview he can open it and view all people's feedbacks and he can add new people to the same interview for giving interviews.. he canopen and see all peoples interview feedbacks.
+
+along with these feature i want profileupdate, change password, reset password features for both the logins...
+
+I have built the backend using django (You can see in the folder aispirelabs_backend) (still developing some apis)
+
+Continue developing backend in django and frontend in nextjs. GIve me a production ready application code with both frontend and backend .. and make sure the responsiveness.. it UI should be compaitable with mobile, tab and desktop User experience also our atmost priority .
+
+Let me knwo if you have any doubts and you need any clarifications.

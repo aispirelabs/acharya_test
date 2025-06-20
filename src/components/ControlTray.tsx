@@ -277,6 +277,7 @@ function ControlTray({
   const { client, connected, connect, disconnect, volume: apiVolume } = useLiveAPIContext();
 
   const [muted, setMuted] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const connectButtonRef = useRef<HTMLButtonElement>(null);
 
   // Video Stream Hooks
@@ -301,11 +302,20 @@ function ControlTray({
     }
   }, [connected]);
 
-  const handleToggleConnection = useCallback(() => {
-    if (connected) {
-      disconnect();
-    } else {
-      connect();
+  const handleToggleConnection = useCallback(async () => {
+    try {
+      setConnectionError(null);
+      if (connected) {
+        await disconnect();
+      } else {
+        await connect();
+      }
+    } catch (error) {
+      console.error("Connection toggle failed:", error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setConnectionError(errorMessage);
+      // You could add a toast notification here to show the error to the user
+      alert(`Connection failed: ${errorMessage}`);
     }
   }, [connected, connect, disconnect]);
 
@@ -318,6 +328,20 @@ function ControlTray({
         size={300}
         rgbColor="0, 150, 255"
       />
+      
+      {/* Connection Error Display */}
+      {connectionError && (
+        <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-3 text-red-200 text-sm max-w-md text-center">
+          <p className="font-semibold mb-1">Connection Error:</p>
+          <p>{connectionError}</p>
+          {connectionError.includes("API key") && (
+            <p className="mt-2 text-xs">
+              Please set the NEXT_PUBLIC_LIVE_API_KEY environment variable with your Gemini Live API key.
+            </p>
+          )}
+        </div>
+      )}
+      
       <section className="flex items-center gap-2">
         <VideoFrameProcessor
           videoRef={videoRef}

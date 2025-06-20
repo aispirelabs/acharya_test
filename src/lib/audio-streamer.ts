@@ -60,7 +60,18 @@ export class AudioStreamer {
 
     const blobUrl = createWorketFromSrc(workletName, workletSrc);
     try {
-      await this.context.audioWorklet.addModule(blobUrl);
+      // Check if the processor is already registered by trying to create a node first
+      // If it fails, then we need to register the processor
+      try {
+        const testNode = new AudioWorkletNode(this.context, workletName);
+        testNode.disconnect();
+        // If we get here, the processor is already registered
+        console.log(`AudioWorklet processor ${workletName} already registered`);
+      } catch (error) {
+        // Processor not registered, so register it
+        await this.context.audioWorklet.addModule(blobUrl);
+      }
+      
       const workletNode = new AudioWorkletNode(this.context, workletName);
 
       // Successfully created node, assign it to the record

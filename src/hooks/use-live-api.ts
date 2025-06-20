@@ -21,6 +21,7 @@ export type UseLiveAPIResults = {
 export function useLiveAPI(options: LiveClientOptions): UseLiveAPIResults {
   const client = useMemo(() => new GenAILiveClient(options), [options]);
   const audioStreamerRef = useRef<AudioStreamer | null>(null);
+  const isWorkletRegisteredRef = useRef(false);
 
   const [model, setModel] = useState<string>("models/gemini-2.0-flash-exp");
   const [config, setConfig] = useState<LiveConnectConfig>({
@@ -31,35 +32,49 @@ export function useLiveAPI(options: LiveClientOptions): UseLiveAPIResults {
 
   // register audio for streaming server -> speakers
   useEffect(() => {
-    if (!audioStreamerRef.current) {
+    if (!audioStreamerRef.current && !isWorkletRegisteredRef.current) {
+      isWorkletRegisteredRef.current = true;
       audioContext({ id: "audio-out" }).then((audioCtx: AudioContext) => {
         audioStreamerRef.current = new AudioStreamer(audioCtx);
         audioStreamerRef.current
           .addWorklet("vumeter-out", VolMeterWorket, (ev: MessageEvent<{ volume: number }>) => {
             setVolume(ev.data.volume);
           })
+          .catch((error) => {
+            console.error("Failed to register AudioWorklet:", error);
+            isWorkletRegisteredRef.current = false;
+          });
       });
     }
-  }, [audioStreamerRef]);
+  }, []);
 
   useEffect(() => {
     const onOpen = () => {
+      console.log("Gemini Live API connection opened successfully");
       setConnected(true);
     };
 
-    const onClose = () => {
+    const onClose = (event: CloseEvent) => {
+      console.log("Gemini Live API connection closed:", event.code, event.reason);
       setConnected(false);
     };
 
     const onError = (error: ErrorEvent) => {
-      console.error("error", error);
+      console.error("Gemini Live API connection error:", error);
+      setConnected(false);
     };
 
-    const stopAudioStreamer = () => audioStreamerRef.current?.stop();
+    const stopAudioStreamer = () => {
+      console.log("Stopping audio streamer due to interruption");
+      audioStreamerRef.current?.stop();
+    };
 
-    const onAudio = (data: ArrayBuffer) =>
+    const onAudio = (data: ArrayBuffer) => {
       audioStreamerRef.current?.addPCM16(new Uint8Array(data));
+    };
 
+    console.log("Setting up Gemini Live API event listeners...");
+    
     client
       .on("error", onError)
       .on("open", onOpen)
@@ -68,6 +83,7 @@ export function useLiveAPI(options: LiveClientOptions): UseLiveAPIResults {
       .on("audio", onAudio);
 
     return () => {
+      console.log("Cleaning up Gemini Live API event listeners...");
       client
         .off("error", onError)
         .off("open", onOpen)
@@ -79,16 +95,41 @@ export function useLiveAPI(options: LiveClientOptions): UseLiveAPIResults {
   }, [client]);
 
   const connect = useCallback(async () => {
-    if (!config) {
-      throw new Error("config has not been set");
+    try {
+      if (!config) {
+        throw new Error("config has not been set");
+      }
+      
+      // Check if API key is available
+      if (!options.apiKey) {
+        throw new Error("API key is not configured. Please set NEXT_PUBLIC_LIVE_API_KEY environment variable.");
+      }
+      
+      console.log("Attempting to connect to Gemini Live API...");
+      console.log("Model:", model);
+      console.log("Config:", config);
+      
+      client.disconnect();
+      await client.connect(model, config);
+      
+      console.log("Connection request sent successfully");
+    } catch (error) {
+      console.error("Failed to connect to Gemini Live API:", error);
+      setConnected(false);
+      throw error;
     }
-    client.disconnect();
-    await client.connect(model, config);
-  }, [client, config, model]);
+  }, [client, config, model, options.apiKey]);
 
   const disconnect = useCallback(async () => {
-    client.disconnect();
-    setConnected(false);
+    try {
+      console.log("Disconnecting from Gemini Live API...");
+      client.disconnect();
+      setConnected(false);
+      console.log("Disconnected successfully");
+    } catch (error) {
+      console.error("Error during disconnect:", error);
+      setConnected(false);
+    }
   }, [setConnected, client]);
 
   return {
