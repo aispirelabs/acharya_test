@@ -1,4 +1,3 @@
-
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -96,7 +95,8 @@ class InterviewDetailView(generics.RetrieveAPIView):
 
     def get(self, request, pk):
         interview = Interview.objects.filter(user=request.user, id=pk).values(
-            'id', 'role', 'type', 'level', 'cover_image', 'techstack', 'questions', 'created_at'
+            'id', 'role', 'type', 'level', 'cover_image', 'techstack', 'questions', 
+            'created_at', 'title', 'job_description', 'max_attempts', 'time_limit', 'show_feedback'
         ).first()
         
         if interview:
@@ -104,7 +104,7 @@ class InterviewDetailView(generics.RetrieveAPIView):
                 'id', 'total_score', 'category_scores', 'strengths', 
                 'areas_for_improvement', 'final_assessment', 'created_at'
             ))
-            interview['attempts'] = feedbacks 
+            interview['feedbacks'] = feedbacks 
             return Response(interview, status=status.HTTP_200_OK)
         else:
             return Response(status=status.HTTP_404_NOT_FOUND)
@@ -121,7 +121,14 @@ class FeedbackCreateView(generics.CreateAPIView):
 
         interview = get_object_or_404(Interview, id=data['interview_id'])
 
+        # Generate AI feedback from transcript
         ai_feedback_data = generate_feedback_ai(data['transcript'], interview_role=interview.role)
+
+        # Count existing attempts for this user and interview
+        existing_attempts = Feedback.objects.filter(
+            interview=interview,
+            user=request.user
+        ).count()
 
         feedback = Feedback.objects.create(
             interview=interview,
@@ -130,7 +137,8 @@ class FeedbackCreateView(generics.CreateAPIView):
             category_scores=ai_feedback_data.get('categoryScores', []),
             strengths=ai_feedback_data.get('strengths', []),
             areas_for_improvement=ai_feedback_data.get('areasForImprovement', []),
-            final_assessment=ai_feedback_data.get('finalAssessment', 'Error or no assessment.')
+            final_assessment=ai_feedback_data.get('finalAssessment', 'No assessment available.'),
+            attempt_number=existing_attempts + 1
         )
         
         output_serializer = FeedbackSerializer(feedback)

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
-import { getInterviewDetail } from '@/lib/api';
+import { getInterviewDetail, createFeedback } from '@/lib/api';
 import { Interview } from '@/lib/types';
 import { ROUTES } from '@/lib/constants';
 import { LiveAPIProvider, useLiveAPIContext } from '@/contexts/LiveAPIContext';
@@ -12,23 +12,21 @@ import { useScreenCapture } from '@/hooks/use-screen-capture';
 import { 
   ArrowLeftIcon,
   ClockIcon,
-  UserIcon,
-  BriefcaseIcon,
-  DocumentTextIcon,
-  ExclamationTriangleIcon,
   VideoCameraIcon,
   VideoCameraSlashIcon,
   ComputerDesktopIcon,
   StopIcon,
   PlayIcon,
-  PauseIcon
+  PauseIcon,
+  MicIcon,
+  MicOffIcon
 } from '@heroicons/react/24/outline';
 
 // Interview-specific Gemini configuration
 const INTERVIEW_CONFIG = {
   apiKey: process.env.NEXT_PUBLIC_LIVE_API_KEY || '',
   model: "models/gemini-2.0-flash-exp",
-  tools: [{ googleSearch: {} }],
+  tools: [],
 };
 
 // Component to handle sending interview context to Gemini
@@ -45,16 +43,12 @@ function InterviewContextSender({
   
   useEffect(() => {
     if (connected && context && !contextSent) {
-      // Send the interview context to initialize the AI interviewer
       console.log('Sending interview context to Gemini...');
-      console.log('Context length:', context.length);
-      console.log('Connection status:', connected);
       
-      // Add timeout to prevent getting stuck
       const timeoutId = setTimeout(() => {
         console.warn('Context sending timed out, marking as sent');
         onContextSent();
-      }, 10000); // 10 second timeout
+      }, 10000);
       
       try {
         client.send({ text: context });
@@ -64,49 +58,41 @@ function InterviewContextSender({
       } catch (error) {
         console.error('Failed to send context:', error);
         clearTimeout(timeoutId);
-        // Still mark as sent to prevent infinite retries
         onContextSent();
       }
     }
   }, [connected, context, contextSent, client, onContextSent]);
   
-  // Debug logging
-  useEffect(() => {
-    console.log('InterviewContextSender state:', {
-      connected,
-      hasContext: !!context,
-      contextSent,
-      contextLength: context?.length
-    });
-  }, [connected, context, contextSent]);
-  
-  return null; // This component doesn't render anything
+  return null;
 }
 
-// Simplified Interview Interface Component
-function SimplifiedInterviewInterface({ 
+// Main Interview Interface Component
+function InterviewInterface({ 
   videoRef, 
   interview, 
   user, 
   timeRemaining, 
-  warnings, 
   interviewContext, 
   contextSent, 
   onContextSent,
-  onEndInterview
+  onEndInterview,
+  transcript,
+  setTranscript
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   interview: Interview;
   user: any;
   timeRemaining: number;
-  warnings: number;
   interviewContext: string;
   contextSent: boolean;
   onContextSent: () => void;
   onEndInterview: () => void;
+  transcript: Array<{role: string, content: string, timestamp: number}>;
+  setTranscript: React.Dispatch<React.SetStateAction<Array<{role: string, content: string, timestamp: number}>>>;
 }) {
   const { client, connected, connect, disconnect, volume: apiVolume } = useLiveAPIContext();
   const [muted, setMuted] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   
   // Video Stream Hooks
   const webcam = useWebcam();
@@ -115,42 +101,36 @@ function SimplifiedInterviewInterface({
   const [isWebcamStreaming, setIsWebcamStreaming] = useState(false);
   const [isScreenCaptureStreaming, setIsScreenCaptureStreaming] = useState(false);
 
+  // Audio recording for transcript
+  const audioRecorderRef = useRef<any>(null);
+
   // Cleanup function for media streams
   const cleanupMediaStreams = () => {
     console.log('Cleaning up media streams...');
     
-    // Stop webcam if active
     if (isWebcamStreaming) {
       webcam.stop();
       setIsWebcamStreaming(false);
-      console.log('Webcam stopped');
     }
     
-    // Stop screen capture if active
     if (isScreenCaptureStreaming) {
       screenCapture.stop();
       setIsScreenCaptureStreaming(false);
-      console.log('Screen capture stopped');
     }
     
-    // Stop all tracks in the video element
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach(track => {
         track.stop();
-        console.log('Stopped track:', track.kind);
       });
       videoRef.current.srcObject = null;
     }
     
+    if (audioRecorderRef.current) {
+      audioRecorderRef.current.stop();
+    }
+    
     setActiveMediaStream(null);
-    console.log('All media streams cleaned up');
-  };
-
-  // Enhanced end interview handler
-  const handleEndInterviewWithCleanup = () => {
-    cleanupMediaStreams();
-    onEndInterview();
   };
 
   // Auto-start webcam when interview starts
@@ -159,6 +139,69 @@ function SimplifiedInterviewInterface({
       startWebcam();
     }
   }, [interviewContext]);
+
+  // Setup audio recording for transcript
+  useEffect(() => {
+    const setupAudioRecording = async () => {
+      if (connected && !muted && !audioRecorderRef.current) {
+        try {
+          const { AudioRecorder } = await import('@/lib/audio-recorder');
+          audioRecorderRef.current = new AudioRecorder();
+          
+          audioRecorderRef.current.on("data", (base64: string) => {
+            if (connected && !muted) {
+              client.sendRealtimeInput([
+                {
+                  mimeType: "audio/pcm;rate=16000",
+                  data: base64,
+                },
+              ]);
+            }
+          });
+
+          audioRecorderRef.current.start();
+          setIsRecording(true);
+        } catch (error) {
+          console.error('Failed to setup audio recording:', error);
+        }
+      }
+    };
+
+    if (connected && !muted) {
+      setupAudioRecording();
+    }
+
+    return () => {
+      if (audioRecorderRef.current) {
+        audioRecorderRef.current.stop();
+        audioRecorderRef.current = null;
+        setIsRecording(false);
+      }
+    };
+  }, [connected, muted, client]);
+
+  // Listen for AI responses and add to transcript
+  useEffect(() => {
+    const handleContent = (content: any) => {
+      if (content.modelTurn && content.modelTurn.parts) {
+        const textParts = content.modelTurn.parts.filter((part: any) => part.text);
+        if (textParts.length > 0) {
+          const aiResponse = textParts.map((part: any) => part.text).join(' ');
+          setTranscript(prev => [...prev, {
+            role: 'assistant',
+            content: aiResponse,
+            timestamp: Date.now()
+          }]);
+        }
+      }
+    };
+
+    client.on('content', handleContent);
+
+    return () => {
+      client.off('content', handleContent);
+    };
+  }, [client, setTranscript]);
 
   // Cleanup on component unmount
   useEffect(() => {
@@ -212,30 +255,10 @@ function SimplifiedInterviewInterface({
 
   const handleToggleConnection = async () => {
     try {
-      console.log('Attempting to toggle connection...');
-      console.log('Current connection status:', connected);
-      
       if (connected) {
-        console.log('Disconnecting...');
         await disconnect();
-        console.log('Disconnected successfully');
       } else {
-        console.log('Connecting...');
         await connect();
-        console.log('Connection request sent');
-        
-        // Test if the AI responds after a short delay
-        setTimeout(() => {
-          if (connected) {
-            console.log('Sending test message...');
-            try {
-              client.send({ text: "Hello, can you hear me?" });
-              console.log('Test message sent');
-            } catch (error) {
-              console.error('Failed to send test message:', error);
-            }
-          }
-        }, 2000);
       }
     } catch (error) {
       console.error("Connection toggle failed:", error);
@@ -243,44 +266,18 @@ function SimplifiedInterviewInterface({
     }
   };
 
-  // Add audio processing for the interview
-  useEffect(() => {
-    if (!connected || muted) return;
-
-    console.log('Setting up audio processing...');
-    
-    // Import AudioRecorder dynamically to avoid SSR issues
-    const setupAudio = async () => {
-      try {
-        const { AudioRecorder } = await import('@/lib/audio-recorder');
-        const audioRecorder = new AudioRecorder();
-        
-        const handleAudioData = (base64: string) => {
-          if (connected && !muted) {
-            client.sendRealtimeInput([
-              {
-                mimeType: "audio/pcm;rate=16000",
-                data: base64,
-              },
-            ]);
-          }
-        };
-
-        audioRecorder.on("data", handleAudioData);
-        audioRecorder.start();
-        console.log('Audio processing started');
-
-        return () => {
-          audioRecorder.off("data", handleAudioData);
-          audioRecorder.stop();
-        };
-      } catch (error) {
-        console.error('Failed to setup audio processing:', error);
+  const handleToggleMute = () => {
+    setMuted(!muted);
+    if (audioRecorderRef.current) {
+      if (!muted) {
+        audioRecorderRef.current.stop();
+        setIsRecording(false);
+      } else {
+        audioRecorderRef.current.start();
+        setIsRecording(true);
       }
-    };
-
-    setupAudio();
-  }, [connected, muted, client]);
+    }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -316,7 +313,7 @@ function SimplifiedInterviewInterface({
               <div className="flex items-center space-x-2">
                 <div className={`w-2 h-2 rounded-full ${contextSent ? 'bg-green-400' : 'bg-yellow-400'}`}></div>
                 <span className="text-white text-sm">
-                  {contextSent ? 'AI Ready' : 'Initializing...'}
+                  {contextSent ? 'AI Interviewer Ready' : 'Initializing AI...'}
                 </span>
               </div>
             </div>
@@ -326,44 +323,40 @@ function SimplifiedInterviewInterface({
           <div className="bg-black/50 backdrop-blur-sm rounded-lg px-3 py-2">
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`}></div>
-              <span className="text-white text-sm">{connected ? 'Connected' : 'Disconnected'}</span>
+              <span className="text-white text-sm">{connected ? 'Live' : 'Disconnected'}</span>
             </div>
           </div>
           
-          {/* Warnings */}
-          {warnings > 0 && (
-            <div className="bg-yellow-500/80 backdrop-blur-sm rounded-lg px-3 py-2">
+          {/* Recording Status */}
+          {isRecording && (
+            <div className="bg-red-500/80 backdrop-blur-sm rounded-lg px-3 py-2">
               <div className="flex items-center space-x-2">
-                <ExclamationTriangleIcon className="h-4 w-4 text-white" />
-                <span className="text-white text-sm">Warning {warnings}/3</span>
+                <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                <span className="text-white text-sm">Recording</span>
               </div>
             </div>
           )}
         </div>
-        
-        {/* Manual Start Button - shown if context is not sent after timeout */}
-        {interviewContext && !contextSent && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-            <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 p-6 text-center">
-              <h3 className="text-white text-lg font-semibold mb-4">Interview Ready</h3>
-              <p className="text-gray-300 mb-4">Click the play button below to start your interview with the AI</p>
-              <button
-                onClick={handleToggleConnection}
-                className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-semibold"
-              >
-                Start Interview
-              </button>
+
+        {/* AI Volume Indicator */}
+        {connected && apiVolume > 0 && (
+          <div className="absolute bottom-4 right-4">
+            <div className="bg-blue-500/80 backdrop-blur-sm rounded-lg px-3 py-2">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                <span className="text-white text-sm">AI Speaking</span>
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Simplified Control Bar */}
+      {/* Control Bar */}
       <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 p-6">
         <div className="flex items-center justify-center space-x-4">
           {/* Mic Control */}
           <button
-            onClick={() => setMuted(!muted)}
+            onClick={handleToggleMute}
             className={`flex items-center justify-center w-12 h-12 rounded-full transition-all ${
               muted 
                 ? 'bg-red-500 text-white' 
@@ -371,14 +364,9 @@ function SimplifiedInterviewInterface({
             }`}
           >
             {muted ? (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-              </svg>
+              <MicOffIcon className="w-6 h-6" />
             ) : (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
+              <MicIcon className="w-6 h-6" />
             )}
           </button>
 
@@ -444,12 +432,10 @@ function SimplifiedInterviewInterface({
 
           {/* End Interview */}
           <button
-            onClick={handleEndInterviewWithCleanup}
+            onClick={onEndInterview}
             className="flex items-center justify-center w-12 h-12 rounded-full bg-red-500 text-white hover:bg-red-600 transition-all"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 3l18 18" />
-            </svg>
+            <StopIcon className="w-6 h-6" />
           </button>
         </div>
       </div>
@@ -457,7 +443,7 @@ function SimplifiedInterviewInterface({
   );
 }
 
-function InterviewInterface() {
+function InterviewStartPage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
@@ -466,15 +452,10 @@ function InterviewInterface() {
   const [error, setError] = useState('');
   const [interviewStarted, setInterviewStarted] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
-  const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [warnings, setWarnings] = useState(0);
-  const [transcript, setTranscript] = useState<Array<{role: string, content: string}>>([]);
+  const [transcript, setTranscript] = useState<Array<{role: string, content: string, timestamp: number}>>([]);
   const [interviewContext, setInterviewContext] = useState<string>('');
   const [contextSent, setContextSent] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [isWebcamStreaming, setIsWebcamStreaming] = useState(false);
-  const [isScreenCaptureStreaming, setIsScreenCaptureStreaming] = useState(false);
+  const [isGeneratingFeedback, setIsGeneratingFeedback] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -491,43 +472,17 @@ function InterviewInterface() {
         setTimeRemaining(prev => prev - 1);
       }, 1000);
     } else if (timeRemaining === 0 && interviewStarted) {
-      // Auto-end interview when time runs out
-      console.log('Time ran out, ending interview...');
       handleEndInterview();
     }
     return () => clearTimeout(timer);
   }, [timeRemaining, interviewStarted]);
-
-  // Cleanup when component unmounts or user navigates away
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      // Clean up media streams when user leaves the page
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-        videoRef.current.srcObject = null;
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      // Also cleanup on component unmount
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-        videoRef.current.srcObject = null;
-      }
-    };
-  }, []);
 
   const fetchInterviewDetails = async () => {
     try {
       setLoading(true);
       const data = await getInterviewDetail(id as string);
       setInterview(data);
-      setTimeRemaining(data.time_limit * 60); // Convert minutes to seconds
+      setTimeRemaining(data.time_limit * 60);
     } catch (err: any) {
       setError('Failed to fetch interview details');
       console.error('Error fetching interview:', err);
@@ -538,132 +493,114 @@ function InterviewInterface() {
 
   const handleStartInterview = () => {
     setInterviewStarted(true);
-    setContextSent(false); // Reset context sent state
+    setContextSent(false);
     
-    // Initialize interview context with Gemini
     const context = `You are an AI interviewer conducting a ${interview?.type} interview for a ${interview?.level} level ${interview?.role} position. 
-    
-    CANDIDATE INFORMATION:
-    - Name: ${user?.first_name} ${user?.last_name}
-    - Position: ${interview?.role}
-    - Level: ${interview?.level}
-    - Interview Type: ${interview?.type}
-    
-    TECHNICAL REQUIREMENTS:
-    - Tech Stack: ${Array.isArray(interview?.techstack) ? interview.techstack.join(', ') : interview?.techstack}
-    - Job Description: ${interview?.job_description || 'Not provided'}
-    
-    INTERVIEW GUIDELINES:
-    1. Start by introducing yourself as the AI interviewer for this ${interview?.type} interview
-    2. Ask relevant technical questions based on the ${interview?.level} level and tech stack
-    3. Be professional, friendly, and conversational
-    4. Listen carefully to responses and ask follow-up questions
-    5. Provide constructive feedback throughout the conversation
-    6. Monitor for any suspicious behavior (copying, looking away frequently, etc.)
-    7. Give warnings if you detect cheating (max 3 warnings)
-    8. End the interview if cheating continues after 3 warnings
-    9. Keep track of the interview time (${interview?.time_limit} minutes total)
-    10. Ask about 5-8 questions depending on the depth of responses
-    
-    SPECIFIC INSTRUCTIONS:
-    - For technical interviews: Focus on coding concepts, problem-solving, and technical knowledge
-    - For behavioral interviews: Focus on past experiences, teamwork, and soft skills
-    - For mixed interviews: Balance both technical and behavioral questions
-    - Always maintain a professional but approachable tone
-    - Provide specific feedback on answers when appropriate
-    
-    Begin the interview by introducing yourself and explaining the interview process.`;
+
+CANDIDATE INFORMATION:
+- Name: ${user?.first_name} ${user?.last_name}
+- Position: ${interview?.role}
+- Level: ${interview?.level}
+- Interview Type: ${interview?.type}
+
+TECHNICAL REQUIREMENTS:
+- Tech Stack: ${Array.isArray(interview?.techstack) ? interview.techstack.join(', ') : interview?.techstack}
+- Job Description: ${interview?.job_description || 'Not provided'}
+
+INTERVIEW GUIDELINES:
+You are a professional, experienced interviewer. Conduct this interview as if you were a human interviewer in a real interview setting. 
+
+BEHAVIOR INSTRUCTIONS:
+1. Start by introducing yourself warmly and professionally
+2. Explain the interview process briefly
+3. Ask questions one at a time and wait for complete responses
+4. Listen actively and ask relevant follow-up questions
+5. Be encouraging and supportive while maintaining professionalism
+6. Monitor the candidate's behavior through video - note if they seem nervous, confident, or distracted
+7. Adapt your questioning style based on their responses and comfort level
+8. For technical questions, allow them to think and work through problems
+9. If they're struggling, provide gentle hints or guidance
+10. Keep track of time and pace the interview appropriately
+
+QUESTION STRATEGY:
+- Start with easier questions to build confidence
+- Gradually increase difficulty based on their responses
+- Mix technical and behavioral questions as appropriate for the interview type
+- Ask about specific experiences and examples
+- Probe deeper into interesting or unclear responses
+- Allow natural conversation flow while staying focused
+
+MONITORING GUIDELINES:
+- Pay attention to their video feed for non-verbal cues
+- Note confidence levels, communication skills, and professionalism
+- Observe problem-solving approach and thought processes
+- Watch for any signs of dishonesty or inappropriate behavior
+
+IMPORTANT: 
+- Speak naturally and conversationally, as a human would
+- Don't mention that you're an AI
+- Be personable and build rapport
+- Keep responses concise but thorough
+- End the interview naturally when time is appropriate or all topics are covered
+
+Begin the interview now by introducing yourself and starting the conversation.`;
     
     setInterviewContext(context);
-    console.log('Starting interview with context:', context);
   };
 
-  // Enhanced interview ending with feedback generation
+  const generateFeedbackFromTranscript = async (transcript: Array<{role: string, content: string, timestamp: number}>) => {
+    try {
+      setIsGeneratingFeedback(true);
+      
+      // Format transcript for AI analysis
+      const formattedTranscript = transcript.map(item => ({
+        role: item.role === 'assistant' ? 'interviewer' : 'candidate',
+        content: item.content
+      }));
+
+      // Create feedback request
+      const feedbackData = {
+        interview_id: id as string,
+        transcript: formattedTranscript
+      };
+
+      await createFeedback(feedbackData);
+      console.log('Feedback generated successfully');
+    } catch (error) {
+      console.error('Error generating feedback:', error);
+    } finally {
+      setIsGeneratingFeedback(false);
+    }
+  };
+
   const handleEndInterview = async () => {
     try {
-      console.log('Interview ended. Cleaning up media streams...');
+      console.log('Interview ended. Cleaning up and generating feedback...');
       
-      // Clean up all media streams
+      // Clean up media streams
       if (videoRef.current && videoRef.current.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(track => {
           track.stop();
-          console.log('Stopped track:', track.kind);
         });
         videoRef.current.srcObject = null;
       }
       
-      console.log('Media streams cleaned up successfully');
-      
-      if (!interview) {
-        console.error('Interview data not available');
-        router.push(`/interview/${id}/results`);
-        return;
+      // Generate feedback from transcript
+      if (transcript.length > 0) {
+        await generateFeedbackFromTranscript(transcript);
       }
-      
-      // TODO: Generate AI feedback based on transcriptions and video analysis
-      const feedback = await generateInterviewFeedback(transcript, interview, user);
-      
-      // TODO: Save feedback to backend
-      console.log('Generated feedback:', feedback);
       
       // Navigate to results page
       router.push(`/interview/${id}/results`);
     } catch (error) {
       console.error('Error ending interview:', error);
-      // Still navigate to results page even if feedback generation fails
       router.push(`/interview/${id}/results`);
     }
   };
 
-  // Placeholder function for AI feedback generation
-  const generateInterviewFeedback = async (transcript: Array<{role: string, content: string}>, interview: Interview, user: any) => {
-    // This would integrate with an AI service to analyze the interview
-    // For now, return a placeholder feedback structure
-    return {
-      overallScore: 85,
-      categories: {
-        technical: { score: 80, strengths: ['Good problem-solving approach'], improvements: ['Could provide more detailed explanations'] },
-        communication: { score: 90, strengths: ['Clear and articulate'], improvements: ['Could ask more clarifying questions'] },
-        problemSolving: { score: 85, strengths: ['Logical thinking'], improvements: ['Could consider edge cases more'] }
-      },
-      summary: 'Strong technical foundation with good communication skills. Areas for improvement include providing more detailed explanations and considering edge cases.',
-      recommendations: [
-        'Practice explaining complex technical concepts in detail',
-        'Work on considering edge cases in problem-solving',
-        'Continue developing communication skills'
-      ]
-    };
-  };
-
   const handleBackToInterview = () => {
     router.push(`/interview/${id}`);
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const startWebcam = () => {
-    // Implementation of starting webcam
-    setIsWebcamStreaming(true);
-  };
-
-  const stopCurrentStream = () => {
-    // Implementation of stopping current stream
-    setIsWebcamStreaming(false);
-  };
-
-  const startScreenCapture = () => {
-    // Implementation of starting screen capture
-    setIsScreenCaptureStreaming(true);
-  };
-
-  const handleToggleConnection = () => {
-    // Implementation of toggling connection
-    setConnected(!connected);
   };
 
   if (loading) {
@@ -711,21 +648,13 @@ function InterviewInterface() {
             </div>
             <div className="flex items-center space-x-4">
               {interviewStarted && (
-                <>
-                  <div className="flex items-center space-x-2 text-white">
-                    <ClockIcon className="h-5 w-5" />
-                    <span className="font-mono text-lg">{formatTime(timeRemaining)}</span>
-                  </div>
-                  {warnings > 0 && (
-                    <div className="flex items-center space-x-2 text-yellow-400">
-                      <ExclamationTriangleIcon className="h-5 w-5" />
-                      <span className="text-sm">Warning {warnings}/3</span>
-                    </div>
-                  )}
-                </>
+                <div className="flex items-center space-x-2 text-white">
+                  <ClockIcon className="h-5 w-5" />
+                  <span className="font-mono text-lg">{Math.floor(timeRemaining / 60)}:{(timeRemaining % 60).toString().padStart(2, '0')}</span>
+                </div>
               )}
               <div className="text-white">
-                <span className="text-sm text-gray-300">Welcome,</span>
+                <span className="text-sm text-gray-300">Candidate:</span>
                 <p className="font-semibold">{user?.first_name} {user?.last_name}</p>
               </div>
             </div>
@@ -740,36 +669,36 @@ function InterviewInterface() {
             <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 p-8">
               <h2 className="text-3xl font-bold text-white mb-4">Ready to Start Your AI Interview?</h2>
               <p className="text-gray-300 text-lg mb-8 max-w-2xl mx-auto">
-                This is a {interview.type} interview for {interview.role} position. 
-                You'll have {interview.time_limit} minutes to complete the interview with our AI interviewer.
+                You'll be interviewed by an AI interviewer who will conduct a natural, human-like conversation. 
+                The AI can see and hear you, so maintain professional behavior throughout.
               </p>
               
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <div className="bg-white/5 rounded-lg p-4">
                   <ClockIcon className="h-8 w-8 text-blue-400 mx-auto mb-2" />
                   <p className="text-white font-semibold">{interview.time_limit} minutes</p>
-                  <p className="text-gray-400 text-sm">Time limit</p>
+                  <p className="text-gray-400 text-sm">Interview duration</p>
                 </div>
                 <div className="bg-white/5 rounded-lg p-4">
-                  <UserIcon className="h-8 w-8 text-green-400 mx-auto mb-2" />
-                  <p className="text-white font-semibold">AI Interviewer</p>
-                  <p className="text-gray-400 text-sm">Voice & Video</p>
+                  <VideoCameraIcon className="h-8 w-8 text-green-400 mx-auto mb-2" />
+                  <p className="text-white font-semibold">Live Video & Audio</p>
+                  <p className="text-gray-400 text-sm">Real-time interaction</p>
                 </div>
                 <div className="bg-white/5 rounded-lg p-4">
-                  <BriefcaseIcon className="h-8 w-8 text-purple-400 mx-auto mb-2" />
-                  <p className="text-white font-semibold">{interview.level} Level</p>
-                  <p className="text-gray-400 text-sm">Difficulty</p>
+                  <ComputerDesktopIcon className="h-8 w-8 text-purple-400 mx-auto mb-2" />
+                  <p className="text-white font-semibold">Screen Sharing</p>
+                  <p className="text-gray-400 text-sm">For coding challenges</p>
                 </div>
               </div>
 
               <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-4 mb-8">
                 <h3 className="text-yellow-200 font-semibold mb-2">Before you start:</h3>
                 <ul className="text-yellow-100 text-sm space-y-1 text-left max-w-md mx-auto">
-                  <li>• Make sure you're in a quiet environment</li>
+                  <li>• Ensure good lighting for your video</li>
                   <li>• Test your microphone and camera</li>
+                  <li>• Find a quiet, professional environment</li>
                   <li>• Have a stable internet connection</li>
-                  <li>• Close other applications that might interfere</li>
-                  <li>• Be ready for voice and video interaction</li>
+                  <li>• Be ready for natural conversation</li>
                 </ul>
               </div>
 
@@ -781,22 +710,37 @@ function InterviewInterface() {
               </button>
             </div>
           </div>
+        ) : isGeneratingFeedback ? (
+          /* Generating Feedback */
+          <div className="text-center space-y-8">
+            <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 p-8">
+              <h2 className="text-3xl font-bold text-white mb-4">Generating Your Feedback</h2>
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400 mx-auto mb-4"></div>
+              <p className="text-gray-300 text-lg">
+                Our AI is analyzing your interview performance and generating detailed feedback...
+              </p>
+            </div>
+          </div>
         ) : (
           /* Live Interview Interface with Gemini */
           <LiveAPIProvider options={INTERVIEW_CONFIG}>
-            <InterviewContextSender context={interviewContext} contextSent={contextSent} onContextSent={() => setContextSent(true)} />
+            <InterviewContextSender 
+              context={interviewContext} 
+              contextSent={contextSent} 
+              onContextSent={() => setContextSent(true)} 
+            />
             
-            {/* Single Interview Interface */}
-            <SimplifiedInterviewInterface 
+            <InterviewInterface 
               videoRef={videoRef} 
               interview={interview} 
               user={user} 
               timeRemaining={timeRemaining} 
-              warnings={warnings} 
               interviewContext={interviewContext} 
               contextSent={contextSent} 
               onContextSent={() => setContextSent(true)} 
               onEndInterview={handleEndInterview}
+              transcript={transcript}
+              setTranscript={setTranscript}
             />
           </LiveAPIProvider>
         )}
@@ -805,6 +749,4 @@ function InterviewInterface() {
   );
 }
 
-export default function InterviewStartPage() {
-  return <InterviewInterface />;
-} 
+export default InterviewStartPage;

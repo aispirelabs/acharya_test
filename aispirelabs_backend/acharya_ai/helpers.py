@@ -25,122 +25,186 @@ class FeedbackResponse(BaseModel):
 
 # Configure the Gemini API key
 try:
-    # Assuming GEMINI_API_KEY is set in Django settings or environment variables
     if os.getenv('GEMINI_API_KEY'):
         client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
     else:
-
         print("WARN: GEMINI_API_KEY not found in settings or environment variables.")
 except Exception as e:
     print(f"Error configuring Gemini: {e}")
 
 
 def get_random_interview_cover():
-    # Placeholder - adapt from your constants/index.ts if needed
     covers = [
         "/covers/adobe.png", "/covers/amazon.png", "/covers/apple.png",
-        # Add more covers as in your project
+        "/covers/google.png", "/covers/microsoft.png", "/covers/netflix.png",
+        "/covers/facebook.png", "/covers/tesla.png", "/covers/default.png"
     ]
     return random.choice(covers) if covers else "/covers/default.png"
 
 def generate_interview_questions_ai(role, level, techstack, type, max_questions):
     """
-    Placeholder for AI question generation.
-    This function should call the Gemini AI to generate questions.
+    Generate interview questions using Gemini AI based on role, level, tech stack, and type.
     """
     print(f"AI: Generating questions for role={role}, level={level}, techstack={techstack}, type={type}, max_questions={max_questions}")
 
-    # Actual Gemini call would be here
-    # For now, return placeholder questions
-    # if not genai.api_key:
-    #     print("WARN: Gemini API key not configured. Returning placeholder questions.")
-    #     return [f"Placeholder Question {i+1} for {role}" for i in range(int(max_questions))]
-
     try:
-        model = os.getenv('GEMINI_MODEL')# Or your preferred model
-        prompt = f"""Prepare questions for a job interview.
-The job role is {role}.
-The job experience level is {level}.
-The tech stack used in the job is: {', '.join(techstack)}.
-The focus between behavioural and technical questions should lean towards: {type}.
-The amount of questions required is: {max_questions}.
-Please return only the questions, without any additional text.
-The questions are going to be read by a voice assistant so do not use "/" or "*" or any other special characters which might break the voice assistant.
-Return the questions formatted as a JSON list of strings, like this:
-["Question 1", "Question 2", "Question 3"]
-"""
-        response = client.models.generate_content(model=model, contents=prompt, config= {
-            "response_mime_type": "application/json",
-            "response_schema": InterviewQuestion
-        })
-        # Assuming the response.text is a JSON string list of questions
+        model = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+        prompt = f"""Generate {max_questions} interview questions for a {level} level {role} position.
+
+Job Details:
+- Role: {role}
+- Experience Level: {level}
+- Tech Stack: {', '.join(techstack)}
+- Interview Type: {type}
+
+Requirements:
+1. Questions should be appropriate for {level} level candidates
+2. Focus should lean towards {type} questions
+3. Include relevant technical questions for the tech stack: {', '.join(techstack)}
+4. Questions should be clear and professional
+5. Avoid special characters that might break voice assistants
+6. Return exactly {max_questions} questions
+
+Return the questions as a JSON array of strings."""
+
+        response = client.models.generate_content(
+            model=model, 
+            contents=prompt, 
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": InterviewQuestion
+            }
+        )
+        
         import json
         questions = json.loads(response.text)
-        print("questions", questions)
         return questions['questions']
+        
     except Exception as e:
         print(f"Error during Gemini AI call for questions: {e}")
-        return [f"Error-generated Question {i+1} for {role}. Details: {e}" for i in range(int(max_questions))]
+        # Return fallback questions
+        fallback_questions = [
+            f"Tell me about your experience with {role} roles.",
+            f"How would you approach a challenging {type} problem?",
+            f"What interests you most about working with {', '.join(techstack[:2])}?",
+            "Describe a project you're particularly proud of.",
+            "How do you stay updated with the latest technologies?"
+        ]
+        return fallback_questions[:int(max_questions)]
 
 
-def generate_feedback_ai(transcript, interview_role="N/A"): # Added interview_role for context
+def generate_feedback_ai(transcript, interview_role="N/A"):
     """
-    Placeholder for AI feedback generation.
-    This function should call the Gemini AI to generate feedback.
+    Generate comprehensive interview feedback using Gemini AI based on the interview transcript.
     """
-    print(f"AI: Generating feedback for transcript: {transcript[:100]}...") # Print first 100 chars
+    print(f"AI: Generating feedback for interview role: {interview_role}")
 
-    # if not genai.api_key:
-    #     print("WARN: Gemini API key not configured. Returning placeholder feedback.")
-    #     return {
-    #         "totalScore": 50,
-    #         "categoryScores": [{"name": "Placeholder Category", "score": 50, "comment": "Placeholder comment due to no AI key."}],
-    #         "strengths": ["Placeholder strength"],
-    #         "areasForImprovement": ["Placeholder improvement area"],
-    #         "finalAssessment": "Placeholder final assessment because Gemini API key is not configured.",
-    #     }
+    if not transcript or len(transcript) == 0:
+        return {
+            "totalScore": 0,
+            "categoryScores": [
+                {"name": "Communication Skills", "score": 0, "comment": "No transcript available for evaluation."},
+                {"name": "Technical Knowledge", "score": 0, "comment": "No transcript available for evaluation."},
+                {"name": "Problem-Solving", "score": 0, "comment": "No transcript available for evaluation."},
+                {"name": "Cultural & Role Fit", "score": 0, "comment": "No transcript available for evaluation."},
+                {"name": "Confidence & Clarity", "score": 0, "comment": "No transcript available for evaluation."}
+            ],
+            "strengths": ["Unable to evaluate due to missing transcript"],
+            "areasForImprovement": ["Complete the interview to receive feedback"],
+            "finalAssessment": "No interview data available for assessment.",
+        }
 
-    formatted_transcript = "\n".join([f"- {item['role']}: {item['content']}" for item in transcript])
+    # Format transcript for analysis
+    formatted_transcript = "\n".join([
+        f"{'Interviewer' if item['role'] == 'interviewer' else 'Candidate'}: {item['content']}" 
+        for item in transcript
+    ])
 
     try:
-        model = os.getenv('GEMINI_MODEL') # Or your preferred model
-        # Schema needs to be defined based on your Firestore structure / feedbackSchema constant
-        # For now, let's construct a detailed prompt and expect a JSON response.
-        prompt = f"""
-You are an AI interviewer analyzing a mock interview for the role of {interview_role}.
-Your task is to evaluate the candidate based on the provided transcript.
-Score from 0 to 100 in each category.
-Transcript:
+        model = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+        
+        prompt = f"""You are an expert interview evaluator analyzing a job interview for the role of {interview_role}.
+
+Please analyze the following interview transcript and provide comprehensive feedback:
+
+INTERVIEW TRANSCRIPT:
 {formatted_transcript}
 
-Please provide your feedback as a JSON object with the following structure:
-{{
-  "totalScore": <integer>,
-  "categoryScores": [{{ "name": "Communication Skills", "score": <integer>, "comment": "<string>" }}, {{ "name": "Technical Knowledge", "score": <integer>, "comment": "<string>" }}, ...],
-  "strengths": ["<string>", ...],
-  "areasForImprovement": ["<string>", ...],
-  "finalAssessment": "<string>"
-}}
-Ensure 'totalScore' is an average or weighted score based on category scores.
-Categories to assess: Communication Skills, Technical Knowledge, Problem-Solving, Cultural & Role Fit, Confidence & Clarity.
-Be thorough and detailed in your analysis.
-"""
-        response = client.models.generate_content(model=model, contents=prompt, config= {
-            "response_mime_type": "application/json",
-            "response_schema": FeedbackResponse
-        })
+EVALUATION CRITERIA:
+Evaluate the candidate on a scale of 0-100 in each category:
+
+1. Communication Skills (0-100)
+   - Clarity of expression
+   - Listening skills
+   - Professional communication
+   - Ability to articulate thoughts
+
+2. Technical Knowledge (0-100)
+   - Understanding of relevant technologies
+   - Problem-solving approach
+   - Technical depth and accuracy
+   - Industry knowledge
+
+3. Problem-Solving (0-100)
+   - Analytical thinking
+   - Approach to challenges
+   - Creativity in solutions
+   - Logical reasoning
+
+4. Cultural & Role Fit (0-100)
+   - Alignment with role requirements
+   - Professional attitude
+   - Team collaboration potential
+   - Company culture fit
+
+5. Confidence & Clarity (0-100)
+   - Self-assurance in responses
+   - Clear and concise answers
+   - Handling of difficult questions
+   - Overall presentation
+
+FEEDBACK REQUIREMENTS:
+- Provide specific, actionable feedback
+- Highlight both strengths and areas for improvement
+- Give an overall assessment with recommendations
+- Be constructive and professional
+- Base scores on actual performance demonstrated in the transcript
+
+Return your evaluation as a JSON object with the exact structure specified."""
+
+        response = client.models.generate_content(
+            model=model, 
+            contents=prompt, 
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": FeedbackResponse
+            }
+        )
+        
         import json
         feedback_data = json.loads(response.text)
-        # Basic validation
-        if not all(k in feedback_data for k in ["totalScore", "categoryScores", "strengths", "areasForImprovement", "finalAssessment"]):
-            raise ValueError("AI response missing required keys.")
+        
+        # Validate required fields
+        required_fields = ["totalScore", "categoryScores", "strengths", "areasForImprovement", "finalAssessment"]
+        if not all(k in feedback_data for k in required_fields):
+            raise ValueError("AI response missing required fields.")
+            
         return feedback_data
+        
     except Exception as e:
         print(f"Error during Gemini AI call for feedback: {e}")
+        
+        # Return a basic feedback structure with error handling
         return {
-            "totalScore": 10,
-            "categoryScores": [{"name": "Error Category", "score": 10, "comment": f"Error during AI feedback generation: {e}"}],
-            "strengths": ["Error in generation"],
-            "areasForImprovement": ["Fix AI call"],
-            "finalAssessment": f"Could not generate feedback due to an error: {e}",
+            "totalScore": 50,
+            "categoryScores": [
+                {"name": "Communication Skills", "score": 50, "comment": "Unable to fully evaluate due to processing error."},
+                {"name": "Technical Knowledge", "score": 50, "comment": "Unable to fully evaluate due to processing error."},
+                {"name": "Problem-Solving", "score": 50, "comment": "Unable to fully evaluate due to processing error."},
+                {"name": "Cultural & Role Fit", "score": 50, "comment": "Unable to fully evaluate due to processing error."},
+                {"name": "Confidence & Clarity", "score": 50, "comment": "Unable to fully evaluate due to processing error."}
+            ],
+            "strengths": ["Participated in the interview process"],
+            "areasForImprovement": ["Technical evaluation could not be completed due to system error"],
+            "finalAssessment": f"The interview evaluation encountered a technical issue. Please contact support for manual review. Error: {str(e)[:100]}",
         }

@@ -133,9 +133,10 @@ export const getInterviewFeedback = async (interviewId: string) => {
   return response.data;
 };
 
+// Updated feedback creation to send transcript to Gemini for analysis
 export const createFeedback = async (feedbackData: {
   interview_id: string;
-  transcript: string;
+  transcript: Array<{role: string, content: string}>;
 }) => {
   const response = await api.post('/acharya_ai/feedback/create/', feedbackData);
   return response.data;
