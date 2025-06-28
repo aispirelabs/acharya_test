@@ -18,8 +18,8 @@ import {
   StopIcon,
   PlayIcon,
   PauseIcon,
-  MicIcon,
-  MicOffIcon
+  MicrophoneIcon,
+  SpeakerXMarkIcon
 } from '@heroicons/react/24/outline';
 
 // Interview-specific Gemini configuration
@@ -364,9 +364,9 @@ function InterviewInterface({
             }`}
           >
             {muted ? (
-              <MicOffIcon className="w-6 h-6" />
+              <SpeakerXMarkIcon className="w-6 h-6" />
             ) : (
-              <MicIcon className="w-6 h-6" />
+              <MicrophoneIcon className="w-6 h-6" />
             )}
           </button>
 
